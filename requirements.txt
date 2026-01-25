@@ -1,0 +1,7 @@
+playwright
+beautifulsoup4
+pandas
+openpyxl
+odfpy
+pydantic
+email-validator
