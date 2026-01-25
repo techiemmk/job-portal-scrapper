@@ -18,7 +18,7 @@ job-portal-scrapper/
 ├── main.py              # Main CLI entry point
 ├── base_scraper.py      # Core logic, heuristics, and base class
 ├── job_models.py        # Pydantic models for data contract enforcement
-├── data_contract.json   # Formal JSON Schema specification
+├── common_job_posting_contract.json # Formal JSON Schema specification
 ├── transform_to_rag.py  # Utility to transform existing CSVs to RAG format
 ├── requirements.txt     # Python dependencies
 ├── scrapers/            # Portal-specific scraper modules
@@ -78,7 +78,7 @@ The tool enforces a strict schema for every job posting:
 | **compensation** | Salary ranges and detailed benefit prose. |
 | **legal** | EEO statements and company backgrounds. |
 
-See `data_contract.json` for the full technical specification.
+See `common_job_posting_contract.json` for the full technical specification.
 
 ## Contributing
 
