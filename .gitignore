@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Playwright
+browser-artifacts/
+test-results/
+playwright-report/
+
+# Project Specific
+data/
+*.xlsx
+*.csv
+*.ods
+*.json
+
+# OS specific
+.DS_Store
+Thumbs.db
