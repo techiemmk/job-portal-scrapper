@@ -15,7 +15,6 @@ data/
 *.xlsx
 *.csv
 *.ods
-*.json
 
 # OS specific
 .DS_Store

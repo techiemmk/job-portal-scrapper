@@ -1,0 +1,150 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Job Posting RAG Data Contract",
+    "description": "Standardized schema for job postings optimized for Retrieval-Augmented Generation (RAG).",
+    "type": "object",
+    "properties": {
+        "startTime": {
+            "type": "string",
+            "format": "date-time"
+        },
+        "endTime": {
+            "type": "string",
+            "format": "date-time"
+        },
+        "status": {
+            "type": "string",
+            "enum": [
+                "completed",
+                "failed",
+                "partial"
+            ]
+        },
+        "companyName": {
+            "type": "string"
+        },
+        "websiteName": {
+            "type": "string"
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "metadata",
+                    "logistics",
+                    "role_details"
+                ],
+                "properties": {
+                    "metadata": {
+                        "type": "object",
+                        "properties": {
+                            "job_id": {
+                                "type": "string"
+                            },
+                            "job_title": {
+                                "type": "string"
+                            },
+                            "organization_name": {
+                                "type": "string"
+                            },
+                            "job_department": {
+                                "type": "string"
+                            },
+                            "job_link": {
+                                "type": "string",
+                                "format": "uri"
+                            },
+                            "posted_date": {
+                                "type": "string",
+                                "format": "date"
+                            }
+                        }
+                    },
+                    "logistics": {
+                        "type": "object",
+                        "properties": {
+                            "job_locations": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "work_mode": {
+                                "type": "string",
+                                "enum": [
+                                    "remote",
+                                    "hybrid",
+                                    "onsite"
+                                ]
+                            },
+                            "travel_requirement": {
+                                "type": "string"
+                            },
+                            "job_type": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "role_details": {
+                        "type": "object",
+                        "properties": {
+                            "job_description": {
+                                "type": "string"
+                            },
+                            "job_responsibilities": {
+                                "type": "string"
+                            },
+                            "minimum_qualifications": {
+                                "type": "string"
+                            },
+                            "preferred_qualifications": {
+                                "type": "string"
+                            },
+                            "language_requirements": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "job_details_metadata": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "compensation": {
+                        "type": "object",
+                        "properties": {
+                            "salary_range": {
+                                "type": "string"
+                            },
+                            "compensation_details": {
+                                "type": "string"
+                            },
+                            "benefits_and_perks": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "legal_and_company": {
+                        "type": "object",
+                        "properties": {
+                            "about_company": {
+                                "type": "string"
+                            },
+                            "equal_employment_opportunity": {
+                                "type": "string"
+                            },
+                            "additional_links": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
