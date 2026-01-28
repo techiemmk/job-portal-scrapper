@@ -133,35 +133,6 @@ class BaseJobScraper:
             "additional_links": ""
         }
 
-    def translate_to_schema(self, job):
-        """Translate internal job dict to schema.org JobPosting format. 
-        Can be overridden by subclasses."""
-        return {
-            "@context": "https://schema.org/",
-            "@type": "JobPosting",
-            "title": job.get("job_name", ""),
-            "description": job.get("job_description", ""),
-            "hiringOrganization": {
-                "@type": "Organization",
-                "name": job.get("about_company", "N/A"),
-                "url": self.base_url
-            },
-            "jobLocation": {
-                "@type": "Place",
-                "address": {
-                    "@type": "PostalAddress",
-                    "addressLocality": job.get("job_location", "")
-                }
-            },
-            "datePosted": datetime.now().strftime("%Y-%m-%d"),
-            "employmentType": "FULL_TIME",
-            "identifier": {
-                "@type": "PropertyValue",
-                "name": "Job ID",
-                "value": job.get("job_link", "").split("/")[-1]
-            },
-            "url": job.get("job_link", "")
-        }
 
     def detect_work_mode(self, text):
         """Heuristic to detect work mode (Remote/Hybrid/Onsite) from text."""
@@ -296,31 +267,6 @@ class BaseJobScraper:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
             
         print(f"RAG JSON results saved to {filename}", flush=True)
-
-    def save_to_json_schema(self, portal_name, company_name, website_name, start_time, status="completed"):
-        """Saves scraped jobs to a standardized JSON schema format."""
-        if not self.jobs:
-            return
-
-        schema_jobs = [self.translate_to_schema(job) for job in self.jobs]
-        
-        output_data = {
-            "startTime": start_time.isoformat(),
-            "endTime": datetime.now().isoformat(),
-            "status": status,
-            "companyName": company_name,
-            "websiteName": website_name,
-            "data": schema_jobs
-        }
-
-        os.makedirs("data", exist_ok=True)
-        timestamp = datetime.now().strftime("%H%M_%d-%b-%Y")
-        filename = f"data/{portal_name}_schema_{timestamp}.json"
-        
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, indent=2, ensure_ascii=False)
-            
-        print(f"Schema JSON results saved to {filename}", flush=True)
 
     def save_to_formats(self, portal_name):
         """Saves scraped jobs to CSV, XLSX, and ODS formats."""

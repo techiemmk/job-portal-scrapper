@@ -61,7 +61,6 @@ class NvidiaScraper(BaseJobScraper):
             # Final Save
             self.save_to_formats("nvidia")
             if start_time:
-                self.save_to_json_schema("nvidia", "NVIDIA Corporation", "nvidia.eightfold.ai", start_time)
                 self.save_to_rag_json("nvidia", "NVIDIA Corporation", "nvidia.eightfold.ai", start_time)
             
             await browser.close()

@@ -29,7 +29,6 @@ class MetaScraper(BaseJobScraper):
             # Final Save
             self.save_to_formats("meta")
             if start_time:
-                self.save_to_json_schema("meta", "Meta Platforms, Inc.", "metacareers.com", start_time)
                 self.save_to_rag_json("meta", "Meta Platforms, Inc.", "metacareers.com", start_time)
             
             await browser.close()

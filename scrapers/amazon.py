@@ -55,7 +55,6 @@ class AmazonScraper(BaseJobScraper):
             # Final Save
             self.save_to_formats("amazon")
             if start_time:
-                self.save_to_json_schema("amazon", "Amazon.com, Inc.", "amazon.jobs", start_time)
                 self.save_to_rag_json("amazon", "Amazon.com, Inc.", "amazon.jobs", start_time)
             
             await browser.close()

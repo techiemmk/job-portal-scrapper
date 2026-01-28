@@ -14,7 +14,10 @@ def transform_latest_data():
         "nvidia": {"name": "NVIDIA Corporation", "web": "nvidia.eightfold.ai"},
         "amazon": {"name": "Amazon.com, Inc.", "web": "amazon.jobs"},
         "apple": {"name": "Apple Inc.", "web": "jobs.apple.com"},
-        "google": {"name": "Google LLC", "web": "google.com/about/careers"}
+        "google": {"name": "Google LLC", "web": "google.com/about/careers"},
+        "openai": {"name": "OpenAI", "web": "openai.com"},
+        "microsoft": {"name": "Microsoft Corporation", "web": "careers.microsoft.com"},
+        "netflix": {"name": "Netflix", "web": "explore.jobs.netflix.net"}
     }
     
     for portal, info in companies.items():

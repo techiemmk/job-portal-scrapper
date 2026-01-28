@@ -31,7 +31,6 @@ class GoogleScraper(BaseJobScraper):
             # Final Save
             self.save_to_formats("google")
             if start_time:
-                self.save_to_json_schema("google", "Google LLC", "google.com/about/careers", start_time)
                 self.save_to_rag_json("google", "Google LLC", "google.com/about/careers", start_time)
             
             await browser.close()

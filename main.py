@@ -6,13 +6,16 @@ from scrapers.google import GoogleScraper
 from scrapers.amazon import AmazonScraper
 from scrapers.nvidia import NvidiaScraper
 from scrapers.apple import AppleScraper
+from scrapers.openai import OpenAIScraper
+from scrapers.microsoft import MicrosoftScraper
+from scrapers.netflix import NetflixScraper
 
 from datetime import datetime
 
 async def main():
     start_time = datetime.now()
     parser = argparse.ArgumentParser(description="Multi-Portal Job Scraper")
-    parser.add_argument("--portal", type=str, choices=["meta", "google", "amazon", "nvidia", "apple"], default="meta", help="Job portal to scrape")
+    parser.add_argument("--portal", type=str, choices=["meta", "google", "amazon", "nvidia", "apple", "openai", "microsoft", "netflix"], default="meta", help="Job portal to scrape")
     parser.add_argument("--max_pages", type=int, help="Maximum number of pages to scrape")
     parser.add_argument("--concurrency", type=int, default=5, help="Number of concurrent browser pages")
     
@@ -33,6 +36,12 @@ async def main():
         scraper = NvidiaScraper(concurrency=args.concurrency)
     elif args.portal == "apple":
         scraper = AppleScraper(concurrency=args.concurrency)
+    elif args.portal == "openai":
+        scraper = OpenAIScraper(concurrency=args.concurrency)
+    elif args.portal == "microsoft":
+        scraper = MicrosoftScraper(concurrency=args.concurrency)
+    elif args.portal == "netflix":
+        scraper = NetflixScraper(concurrency=args.concurrency)
 
     if scraper:
         await scraper.run(max_pages=args.max_pages, start_time=start_time)

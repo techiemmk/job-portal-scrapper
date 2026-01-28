@@ -30,7 +30,6 @@ class AppleScraper(BaseJobScraper):
             # Final Save
             self.save_to_formats("apple")
             if start_time:
-                self.save_to_json_schema("apple", "Apple Inc.", "jobs.apple.com", start_time)
                 self.save_to_rag_json("apple", "Apple Inc.", "jobs.apple.com", start_time)
             
             await browser.close()
