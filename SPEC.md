@@ -32,6 +32,7 @@ The schema is divided into five logical namespaces to allow for targeted retriev
 | `minimum_qualifications`| Text | Hard requirements for the role. |
 | `preferred_qualifications`| Text | "Bonus" qualifications or preferred experience. |
 | `language_requirements`| List<Str> | Detected languages required for the role. |
+| `job_details_metadata` | Text | Additional raw context or nested metadata from the portal. |
 
 ### compensation
 | Field | Type | Description |

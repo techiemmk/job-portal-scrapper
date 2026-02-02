@@ -1,6 +1,6 @@
 # Multi-Portal Job Scraper & RAG Data Pipeline
 
-A high-performance, modular tool designed to scrape job listings from major tech career portals (Apple, Meta, Google, Amazon, NVIDIA) and transform them into a standardized, **RAG-ready (Retrieval-Augmented Generation)** data format.
+A high-performance, modular tool designed to scrape job listings from major tech career portals (Apple, Meta, Google, Amazon, NVIDIA, Microsoft, Netflix, OpenAI) and transform them into a standardized, **RAG-ready (Retrieval-Augmented Generation)** data format.
 
 ## Key Features
 
@@ -9,7 +9,7 @@ A high-performance, modular tool designed to scrape job listings from major tech
 - **Smart Heuristics**: Auto-detects `work_mode` (Remote/Hybrid/Onsite), `travel_requirements`, and `language_requirements` from unstructured text.
 - **Multi-Format Export**: Saves data in CSV, XLSX, ODS, and standardized JSON (Schema.org & RAG-Ready).
 - **Concurrency Control**: Asynchronous scraping with Playwright and semaphores for high throughput without getting blocked.
-- **Global Scope**: Specialized logic to bypass regional filters (e.g., Apple's "United States" default).
+- **Global Scope**: Specialized logic for global search (e.g., Apple's global internal API, Microsoft's global career API).
 
 ## Project Structure
 
@@ -22,11 +22,14 @@ job-portal-scrapper/
 ├── transform_to_rag.py  # Utility to transform existing CSVs to RAG format
 ├── requirements.txt     # Python dependencies
 ├── scrapers/            # Portal-specific scraper modules
-│   ├── apple.py         # Apple Jobs Scraper (Global logic)
+│   ├── apple.py         # Apple Jobs Scraper (Global API)
 │   ├── meta.py          # Meta Careers Scraper (JSON-LD parsing)
-│   ├── google.py        # Google Careers Scraper (API-based)
+│   ├── google.py        # Google Careers Scraper (Public API)
 │   ├── nvidia.py        # NVIDIA Scraper (Eightfold.ai API)
-│   └── amazon.py        # Amazon Jobs Scraper (Public API)
+│   ├── amazon.py        # Amazon Jobs Scraper (Public API)
+│   ├── microsoft.py     # Microsoft Careers Scraper (Public API)
+│   ├── netflix.py       # Netflix Careers Scraper (Eightfold.ai API)
+│   └── openai.py        # OpenAI Careers Scraper (Greenhouse API)
 └── data/                # [Ignored] Output folder for scraped files
 ```
 
@@ -53,8 +56,11 @@ Run the scraper using `main.py`. It will automatically save data in all supporte
 # Scrape Apple Careers (Global)
 python main.py --portal apple --max_pages 5 --concurrency 10
 
-# Scrape NVIDIA Careers
-python main.py --portal nvidia --max_pages 2
+# Scrape Microsoft Careers
+python main.py --portal microsoft --max_pages 3
+
+# Scrape Netflix Careers
+python main.py --portal netflix --max_pages 2
 
 # Scrape Meta Careers
 python main.py --portal meta --concurrency 15
