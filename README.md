@@ -4,7 +4,7 @@ A high-performance, modular tool designed to scrape job listings from major tech
 
 
 ## Key Features
-
+ 
 - **Universal RAG Schema**: Automatically transforms messy career portal data into a clean, granular `snake_case` JSON structure optimized for LLMs.
 - **Data Contract Enforcement**: Uses **Pydantic** models to validate every scraped job against a strict data contract.
 - **Smart Heuristics**: Auto-detects `work_mode` (Remote/Hybrid/Onsite), `travel_requirements`, and `language_requirements` from unstructured text.
