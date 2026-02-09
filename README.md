@@ -2,6 +2,7 @@
 
 A high-performance, modular tool designed to scrape job listings from major tech career portals (Apple, Meta, Google, Amazon, NVIDIA, Microsoft, Netflix, OpenAI) and transform them into a standardized, **RAG-ready (Retrieval-Augmented Generation)** data format.
 
+
 ## Key Features
 
 - **Universal RAG Schema**: Automatically transforms messy career portal data into a clean, granular `snake_case` JSON structure optimized for LLMs.
