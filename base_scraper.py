@@ -303,6 +303,19 @@ class BaseJobScraper:
         
         print(f"Results saved to {base_filename}.[xlsx, ods, csv]", flush=True)
 
+    def save_to_db(self, portal_name, company_name=None):
+        """Saves scraped jobs to PostgreSQL database using incremental sync."""
+        try:
+            from db import sync_jobs
+            summary = sync_jobs(portal_name, company_name or portal_name.capitalize(), self.jobs)
+            return summary
+        except ImportError:
+            print("Error: psycopg2 is not installed. Run: pip install psycopg2-binary")
+            return None
+        except Exception as e:
+            print(f"Error saving to database: {e}")
+            return None
+
     async def run(self, max_pages=None, start_time=None):
         """Abstract run method to be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement the run method")

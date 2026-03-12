@@ -12,12 +12,25 @@ from scrapers.netflix import NetflixScraper
 
 from datetime import datetime
 
+PORTAL_MAP = {
+    "meta":      ("Meta",      MetaScraper),
+    "google":    ("Google",    GoogleScraper),
+    "amazon":    ("Amazon",    AmazonScraper),
+    "nvidia":    ("NVIDIA",    NvidiaScraper),
+    "apple":     ("Apple",     AppleScraper),
+    "openai":    ("OpenAI",    OpenAIScraper),
+    "microsoft": ("Microsoft", MicrosoftScraper),
+    "netflix":   ("Netflix",   NetflixScraper),
+}
+
 async def main():
     start_time = datetime.now()
     parser = argparse.ArgumentParser(description="Multi-Portal Job Scraper")
-    parser.add_argument("--portal", type=str, choices=["meta", "google", "amazon", "nvidia", "apple", "openai", "microsoft", "netflix"], default="meta", help="Job portal to scrape")
+    parser.add_argument("--portal", type=str, choices=list(PORTAL_MAP.keys()), default="meta", help="Job portal to scrape")
     parser.add_argument("--max_pages", type=int, help="Maximum number of pages to scrape")
     parser.add_argument("--concurrency", type=int, default=5, help="Number of concurrent browser pages")
+    parser.add_argument("--save-to-db", action="store_true", help="Save scraped jobs to PostgreSQL database")
+    parser.add_argument("--db-only", action="store_true", help="Save to database only, skip file exports (implies --save-to-db)")
     
     args = parser.parse_args()
 
@@ -25,26 +38,31 @@ async def main():
         print(f"Error: --max_pages must be greater than 0. Received: {args.max_pages}")
         sys.exit(1)
 
-    scraper = None
-    if args.portal == "meta":
-        scraper = MetaScraper(concurrency=args.concurrency)
-    elif args.portal == "google":
-        scraper = GoogleScraper(concurrency=args.concurrency)
-    elif args.portal == "amazon":
-        scraper = AmazonScraper(concurrency=args.concurrency)
-    elif args.portal == "nvidia":
-        scraper = NvidiaScraper(concurrency=args.concurrency)
-    elif args.portal == "apple":
-        scraper = AppleScraper(concurrency=args.concurrency)
-    elif args.portal == "openai":
-        scraper = OpenAIScraper(concurrency=args.concurrency)
-    elif args.portal == "microsoft":
-        scraper = MicrosoftScraper(concurrency=args.concurrency)
-    elif args.portal == "netflix":
-        scraper = NetflixScraper(concurrency=args.concurrency)
+    # --db-only implies --save-to-db
+    if args.db_only:
+        args.save_to_db = True
 
-    if scraper:
-        await scraper.run(max_pages=args.max_pages, start_time=start_time)
+    # Initialize database if needed
+    if args.save_to_db:
+        try:
+            from db import init_db
+            init_db()
+        except Exception as e:
+            print(f"Error initializing database: {e}")
+            sys.exit(1)
+
+    company_name, scraper_class = PORTAL_MAP[args.portal]
+    scraper = scraper_class(concurrency=args.concurrency)
+
+    # Override save_to_formats if --db-only is set
+    if args.db_only:
+        scraper.save_to_formats = lambda portal_name: print(f"Skipping file export for {portal_name} (--db-only mode)")
+
+    await scraper.run(max_pages=args.max_pages, start_time=start_time)
+
+    # Save to database if flag is set
+    if args.save_to_db:
+        scraper.save_to_db(args.portal, company_name)
 
 if __name__ == "__main__":
     try:

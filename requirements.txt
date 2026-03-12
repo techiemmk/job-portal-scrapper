@@ -5,3 +5,4 @@ openpyxl
 odfpy
 pydantic
 email-validator
+psycopg2-binary
