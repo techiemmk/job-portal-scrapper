@@ -5,16 +5,46 @@ import re
 import psycopg2
 from datetime import datetime, date
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# Module-level env mode — set via set_env_mode() before any DB calls
+_env_mode = "LOCAL"
+
+
+def set_env_mode(mode):
+    """Set the environment mode: 'LOCAL' or 'PROD'."""
+    global _env_mode
+    _env_mode = mode.upper()
+    print(f"Database mode set to: {_env_mode}")
+
 
 def get_connection():
-    """Create a PostgreSQL connection using environment variables."""
-    return psycopg2.connect(
-        host=os.environ.get("DB_HOST", "localhost"),
-        port=os.environ.get("DB_PORT", "5432"),
-        dbname=os.environ.get("DB_NAME", "job_scraper"),
-        user=os.environ.get("DB_USER", "postgres"),
-        password=os.environ.get("DB_PASSWORD", "postgres")
-    )
+    """Create a PostgreSQL connection.
+    - LOCAL: uses DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD env vars
+    - PROD:  uses SUPABASE_DB_URL connection string (Supabase PostgreSQL)
+    """
+    if _env_mode == "PROD":
+        db_url = os.environ.get("SUPABASE_DB_URL")
+        if not db_url:
+            raise ValueError(
+                "SUPABASE_DB_URL environment variable is required in PROD mode.\n"
+                "Get it from: Supabase Dashboard → Settings → Database → Connection string (URI)"
+            )
+        print(f"Connecting to Supabase PostgreSQL...") if not hasattr(get_connection, '_logged') else None
+        get_connection._logged = True
+        return psycopg2.connect(db_url)
+    else:
+        return psycopg2.connect(
+            host=os.environ.get("DB_HOST", "localhost"),
+            port=os.environ.get("DB_PORT", "5432"),
+            dbname=os.environ.get("DB_NAME", "job_scraper"),
+            user=os.environ.get("DB_USER", "postgres"),
+            password=os.environ.get("DB_PASSWORD", "postgres")
+        )
 
 
 def init_db():

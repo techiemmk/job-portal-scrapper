@@ -6,3 +6,4 @@ odfpy
 pydantic
 email-validator
 psycopg2-binary
+python-dotenv

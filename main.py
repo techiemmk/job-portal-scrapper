@@ -31,6 +31,8 @@ async def main():
     parser.add_argument("--concurrency", type=int, default=5, help="Number of concurrent browser pages")
     parser.add_argument("--save-to-db", action="store_true", help="Save scraped jobs to PostgreSQL database")
     parser.add_argument("--db-only", action="store_true", help="Save to database only, skip file exports (implies --save-to-db)")
+    parser.add_argument("--env", type=str, choices=["LOCAL", "PROD"], default="LOCAL",
+                        help="Environment: LOCAL (default PostgreSQL) or PROD (Supabase DB)")
     
     args = parser.parse_args()
 
@@ -42,10 +44,15 @@ async def main():
     if args.db_only:
         args.save_to_db = True
 
+    # --env PROD implies --save-to-db (no point connecting to Supabase without saving)
+    if args.env == "PROD":
+        args.save_to_db = True
+
     # Initialize database if needed
     if args.save_to_db:
         try:
-            from db import init_db
+            from db import init_db, set_env_mode
+            set_env_mode(args.env)
             init_db()
         except Exception as e:
             print(f"Error initializing database: {e}")
