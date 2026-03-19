@@ -114,7 +114,32 @@ class GoogleScraper(BaseJobScraper):
             await page.goto(url)
             await page.wait_for_timeout(5000)
 
-            # Try to find the data in any script tag that might contain it
+            html = await page.content()
+            soup = BeautifulSoup(html, 'html.parser')
+
+            # Start with Schema.org fallback or empty dict
+            res = self.extract_schema_job_data(html, url)
+            if not res:
+                res = {
+                    "job_link": url,
+                    "job_name": "",
+                    "job_department": "",
+                    "job_location": "",
+                    "job_description": "",
+                    "minimum_qualifications": "",
+                    "preferred_qualifications": "",
+                    "job_responsibilities": "",
+                    "about_company": "",
+                    "eeo": "",
+                    "additional_links": ""
+                }
+
+            # Job title from h2 with class 'p1N2lc'
+            title_elem = soup.find('h2', class_='p1N2lc')
+            if title_elem:
+                res["job_name"] = title_elem.get_text().strip()
+
+            # Try to extract JS data for qualifications and responsibilities
             job_data = await page.evaluate(r"""() => {
                 const scripts = Array.from(document.querySelectorAll('script'));
                 for (const script of scripts) {
@@ -125,7 +150,6 @@ class GoogleScraper(BaseJobScraper):
                             if (match) {
                                 const config = eval("(" + match[1] + ")");
                                 const rawData = config.data;
-                                // On detail pages, rawData is often [ [job_details] ]
                                 if (rawData && rawData[0] && rawData[0][0] && rawData[0][0].length > 5) {
                                     return rawData;
                                 }
@@ -136,31 +160,20 @@ class GoogleScraper(BaseJobScraper):
                 return null;
             }""")
 
-            if not job_data:
-                # Fallback to Schema.org JobPosting
-                html = await page.content()
-                return self.extract_schema_job_data(html, url)
-
             if job_data and len(job_data) > 0:
-                # rawData is [ [job_details] ]
                 raw = job_data[0]
-                res = {
-                    "job_link": url,
-                    "job_name": raw[1] if len(raw) > 1 else "",
-                }
+                if not res.get("job_name") and len(raw) > 1:
+                    res["job_name"] = raw[1]
                 
-                # Responsibilities
-                res['job_responsibilities'] = self.clean_html_field(raw[3][1] if len(raw) > 3 and raw[3] else "")
+                # Qualifications and responsibilities
+                if len(raw) > 3 and raw[3]:
+                    res['job_responsibilities'] = self.clean_html_field(raw[3][1])
                 
-                # Qualifications (Minimum and Preferred are often in raw[4][1])
                 quals_html = raw[4][1] if len(raw) > 4 and raw[4] else ""
-                soup = BeautifulSoup(quals_html, 'html.parser')
-                
-                min_quals = []
-                pref_quals = []
-                
+                q_soup = BeautifulSoup(quals_html, 'html.parser')
+                min_quals, pref_quals = [], []
                 current_section = None
-                for element in soup.children:
+                for element in q_soup.children:
                     text = element.get_text().lower()
                     if 'minimum' in text:
                         current_section = 'min'
@@ -173,40 +186,101 @@ class GoogleScraper(BaseJobScraper):
                             min_quals.extend(items)
                         elif current_section == 'pref':
                             pref_quals.extend(items)
-                
-                res['minimum_qualifications'] = "\n".join(min_quals)
-                res['preferred_qualifications'] = "\n".join(pref_quals)
-                
-                # Description (often in raw[2][1] or raw[5][1])
-                # Based on observation, raw[2] or raw[5] contains description parts
-                desc_parts = []
-                for idx in [2, 5]:
-                    if len(raw) > idx and raw[idx] and isinstance(raw[idx], list) and len(raw[idx]) > 1:
-                        val = self.clean_html_field(raw[idx][1])
-                        if val:
-                            desc_parts.append(str(val))
-                res['job_description'] = "\n\n".join(desc_parts)
-                
-                # Locations (often in raw[14])
-                locations = []
-                if len(raw) > 14 and raw[14]:
-                    for loc in raw[14]:
-                        if isinstance(loc, list) and len(loc) > 1:
-                            locations.append(loc[1])
-                res['job_location'] = ", ".join([str(l) for l in locations])
-                
-                # About Company - Standard Google blurb
-                res['about_company'] = "Google is proud to be an equal opportunity workplace and is an affirmative action employer."
-                
-                # EEO Statement - Standard Google EEO
-                res['eeo'] = "Google is an Equal Opportunity Employer. All qualified applicants will receive consideration for employment without regard to race, color, religion, sex, sexual orientation, gender identity, national origin, disability, or protected veteran status."
-                
-                # Links from description
-                res['additional_links'] = ", ".join(self.extract_links_from_field(quals_html))
-                
-                return res
+                if min_quals:
+                    res['minimum_qualifications'] = "\n".join(min_quals)
+                if pref_quals:
+                    res['preferred_qualifications'] = "\n".join(pref_quals)
 
-            return None
+            # --- DOM-based parsing using specific CSS classes ---
+            
+            # Department: extract from the child <span> inside '.RP7SMd'
+            # (The outer RP7SMd also contains an icon; the actual text is in a nested span)
+            dept_elem = soup.find(class_='RP7SMd')
+            if dept_elem:
+                child_span = dept_elem.find('span')
+                if child_span:
+                    res['job_department'] = child_span.get_text().strip()
+                else:
+                    res['job_department'] = dept_elem.get_text().strip()
+
+            # Location: inside span with class 'pwO9Dc vo5qdf',
+            # iterate each child span with class 'r0wTof' for clean location text
+            loc_container = soup.find(class_='pwO9Dc vo5qdf')
+            if loc_container:
+                loc_spans = loc_container.find_all('span', class_='r0wTof')
+                locations = [s.get_text().strip() for s in loc_spans if s.get_text().strip()]
+                # Remove duplicates while preserving order
+                unique_locs = []
+                for loc in locations:
+                    if loc not in unique_locs:
+                        unique_locs.append(loc)
+                if unique_locs:
+                    res['job_location'] = ", ".join(unique_locs)
+
+            # Collect all additional links from multiple sections
+            all_links = []
+
+            # Job description: div with class 'aG5W3'
+            # Remove the leading <h3>About the job</h3> header before cleaning
+            desc_elem = soup.find('div', class_='aG5W3')
+            if desc_elem:
+                # Remove the "About the job" heading so it doesn't end up in the stored description
+                about_heading = desc_elem.find('h3')
+                if about_heading and 'about the job' in about_heading.get_text().lower():
+                    about_heading.decompose()
+                
+                # Check <p> tags for compensation/salary details
+                # Pattern: "salary range for this full-time position is $120,000-$172,000 + bonus + equity + benefits"
+                for p_tag in desc_elem.find_all('p'):
+                    p_text = p_tag.get_text().strip()
+                    if re.search(r'salary\s+range', p_text, re.IGNORECASE):
+                        res['compensation_details'] = p_text
+                        # Also try to extract the raw salary string for the salary column
+                        salary_match = re.search(r'\$[\d,]+\s*[-–]\s*\$[\d,]+', p_text)
+                        if salary_match:
+                            res['salary'] = salary_match.group(0)
+                        # Remove this paragraph from description so it isn't duplicated
+                        p_tag.decompose()
+                        break
+
+                desc_html = str(desc_elem)
+                res['job_description'] = self.clean_html_field(desc_html)
+                
+                # Hyperlinks from the description div
+                all_links.extend(self.extract_links_from_field(desc_html))
+
+            # Responsibilities: <li> tags inside div with class 'BDNOWe'
+            resp_elem = soup.find('div', class_='BDNOWe')
+            if resp_elem:
+                li_items = resp_elem.find_all('li')
+                if li_items:
+                    responsibilities = [f"• {li.get_text().strip()}" for li in li_items if li.get_text().strip()]
+                    if responsibilities:
+                        res['job_responsibilities'] = "\n".join(responsibilities)
+
+            # EEO statement & additional links from div with class 'XS9rpb'
+            eeo_container = soup.find('div', class_='XS9rpb')
+            if eeo_container:
+                p_tags = eeo_container.find_all('p')
+                # Second <p> tag is the EEO statement
+                if len(p_tags) >= 2:
+                    res['eeo'] = self.clean_html_field(str(p_tags[1]))
+                elif len(p_tags) == 1:
+                    res['eeo'] = self.clean_html_field(str(p_tags[0]))
+                
+                # Iterate all p.ciFk0 tags and extract their hyperlinks
+                cif_p_tags = eeo_container.find_all('p', class_='ciFk0')
+                for p_tag in cif_p_tags:
+                    all_links.extend(self.extract_links_from_field(str(p_tag)))
+
+            # Deduplicate links while preserving order, store as comma-separated string
+            unique_links = []
+            for link in all_links:
+                if link not in unique_links:
+                    unique_links.append(link)
+            res['additional_links'] = ", ".join(unique_links)
+
+            return res
 
         except Exception as e:
             print(f"Error scraping Google job {url}: {e}")
