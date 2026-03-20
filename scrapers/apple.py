@@ -190,7 +190,8 @@ class AppleScraper(BaseJobScraper):
                         "responsibilities": getSection("responsibilities"),
                         "min_quals": getSection("minimumqualifications"),
                         "pref_quals": getSection("preferredqualifications"),
-                        "education": getSection("education-experience")
+                        "education": getSection("education-experience"),
+                        "eeo": document.querySelector('section.ac-gf-sosumi') ? document.querySelector('section.ac-gf-sosumi').innerText.trim() : ""
                     };
                 }""")
                 
@@ -219,10 +220,10 @@ class AppleScraper(BaseJobScraper):
                     "job_responsibilities": data["responsibilities"] or data["description"],
                     "minimum_qualifications": data["min_quals"],
                     "preferred_qualifications": data["pref_quals"],
-                    "about_company": "Apple is a leader in consumer electronics, software and services.",
+                    "about_company": "",
                     "salary": "",
                     "compensation_details": "",
-                    "eeo": "Apple is an equal opportunity employer that is committed to inclusion and diversity.",
+                    "eeo": data.get("eeo", ""),
                     "additional_links": f"Role Number: {data['roleNum']}" if data['roleNum'] else ""
                 }
                 

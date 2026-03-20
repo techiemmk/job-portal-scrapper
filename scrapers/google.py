@@ -19,14 +19,8 @@ class GoogleScraper(BaseJobScraper):
             job_links = await self.get_all_job_links(context, max_pages)
             print(f"Total Google jobs to scrape: {len(job_links)}")
             
-            # Step 2: Scrape job details in parallel
-            tasks = []
-            for link in job_links:
-                tasks.append(self.scrape_job_with_semaphore(context, link))
-            
-            # Execute tasks
-            results = await asyncio.gather(*tasks)
-            self.jobs = [r for r in results if r]
+            # Step 2: Scrape job details in staggered batches (handled by base class)
+            self.jobs = await self.scrape_jobs_in_batches(context, job_links, "google")
             
             # Final Save
             self.save_to_formats("google")
@@ -102,16 +96,9 @@ class GoogleScraper(BaseJobScraper):
         await page.close()
         return all_links
 
-    async def scrape_job_with_semaphore(self, context, url):
-        async with self.semaphore:
-            page = await context.new_page()
-            result = await self.scrape_job_details(page, url)
-            await page.close()
-            return result
-
     async def scrape_job_details(self, page, url):
         try:
-            await page.goto(url)
+            await page.goto(url, timeout=60000)
             await page.wait_for_timeout(5000)
 
             html = await page.content()

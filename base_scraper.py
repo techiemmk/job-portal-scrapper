@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import html
 import json
 import pandas as pd
 from datetime import datetime
@@ -18,6 +19,98 @@ class BaseJobScraper:
         self.semaphore = asyncio.Semaphore(concurrency)
         self.jobs = []
 
+    async def scrape_single_job(self, context, url, max_retries=2, **kwargs):
+        """Scrape a single job with retry logic, page lifecycle management.
+        
+        Subclasses should implement scrape_job_details(page, url, **kwargs).
+        """
+        async with self.semaphore:
+            for attempt in range(max_retries + 1):
+                page = None
+                try:
+                    page = await context.new_page()
+                    result = await self.scrape_job_details(page, url, **kwargs)
+                    await page.close()
+                    return result
+                except Exception as e:
+                    if page:
+                        try:
+                            await page.close()
+                        except:
+                            pass
+                    if attempt < max_retries:
+                        wait = 3 * (attempt + 1)
+                        print(f"    ↻ Retry {attempt+1}/{max_retries} for {url} (waiting {wait}s): {e}")
+                        await asyncio.sleep(wait)
+                    else:
+                        raise
+
+    async def scrape_jobs_in_batches(self, context, job_items, portal_name,
+                                     batch_size=10, delay_between_batches=2,
+                                     save_interval=50):
+        """Process job URLs/IDs in staggered batches with progress tracking.
+        
+        Args:
+            context: Playwright browser context
+            job_items: List of (url, kwargs_dict) tuples, or just a list of URLs.
+                       Each item will be passed to scrape_single_job.
+            portal_name: Name for logging and intermediate saves (e.g., "microsoft")
+            batch_size: Number of jobs per batch (default 10)
+            delay_between_batches: Seconds to wait between batches (default 2)
+            save_interval: Save progress every N successful jobs (default 50)
+        
+        Returns:
+            List of successfully scraped job dicts.
+        """
+        # Normalize job_items to list of (url, kwargs) tuples
+        normalized = []
+        for item in job_items:
+            if isinstance(item, tuple):
+                normalized.append(item)
+            else:
+                normalized.append((item, {}))
+        
+        all_results = []
+        total = len(normalized)
+        
+        for batch_start in range(0, total, batch_size):
+            batch_end = min(batch_start + batch_size, total)
+            batch = normalized[batch_start:batch_end]
+            batch_num = (batch_start // batch_size) + 1
+            total_batches = (total + batch_size - 1) // batch_size
+            
+            print(f"  Batch {batch_num}/{total_batches}: scraping jobs {batch_start+1}-{batch_end} of {total}...")
+            
+            # Create tasks for this batch
+            tasks = [
+                self.scrape_single_job(context, url, **kwargs)
+                for url, kwargs in batch
+            ]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Collect results, log failures
+            for i, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    print(f"    ⚠ Job {batch_start+i+1} failed: {result}")
+                elif result is not None:
+                    all_results.append(result)
+            
+            # Intermediate save to avoid data loss
+            if len(all_results) > 0 and len(all_results) % save_interval < batch_size:
+                self.jobs = all_results
+                self.save_to_formats(portal_name)
+                print(f"    💾 Intermediate save: {len(all_results)} jobs saved so far.")
+            
+            # Stagger: delay between batches
+            if batch_end < total:
+                cooldown = delay_between_batches
+                if batch_num % 100 == 0:
+                    cooldown = 10
+                    print(f"    ⏳ Extended cooldown ({cooldown}s) after {batch_num} batches...")
+                await asyncio.sleep(cooldown)
+        
+        return all_results
+
     def clean_html_field(self, field_val):
         """Cleans HTML content and preserves formatting like bullet points."""
         if not field_val: return ""
@@ -30,17 +123,30 @@ class BaseJobScraper:
         if not isinstance(field_val, str): return str(field_val)
         
         # Replace common tags with newlines or spaces to preserve lists
-        content = field_val.replace('</li>', '\n• ').replace('<ul>', '\n').replace('</ul>', '\n')
+        # Add bullet AT THE FRONT of li, not the end
+        content = field_val.replace('<li>', '• ').replace('</li>', '\n').replace('<ul>', '\n').replace('</ul>', '\n')
         content = content.replace('<br>', '\n').replace('<br/>', '\n').replace('</p>', '\n\n')
         
         # Remove remaining tags
         clean_text = re.sub('<[^<]+?>', '', content)
         
-        # Clean entities
-        clean_text = clean_text.replace('&quot;', '"').replace('&#039;', "'").replace('&amp;', '&')
-        clean_text = clean_text.replace('&nbsp;', ' ').replace('&bull;', '•')
+        # Decode all HTML entities (&#43; → +, &amp; → &, &quot; → ", etc.)
+        clean_text = html.unescape(clean_text)
         
-        return clean_text.strip()
+        # De-duplicate identical lines (fixes platforms like Eightfold which embed plaintext + HTML of the same description)
+        seen = set()
+        deduped_lines = []
+        for line in clean_text.split('\n'):
+            stripped = line.strip()
+            if stripped and len(stripped) > 15:
+                # Remove leading bullets for identity check so '• text' and 'text' match
+                identity = re.sub(r'^[*•-]\s*', '', stripped).lower()
+                if identity in seen:
+                    continue
+                seen.add(identity)
+            deduped_lines.append(stripped)
+            
+        return "\n".join(deduped_lines).strip()
 
     def extract_links_from_field(self, field_val):
         """Extracts all hyperlinks from an HTML string."""
@@ -91,15 +197,28 @@ class BaseJobScraper:
         """Map Schema.org JobPosting fields to our internal format"""
         # Location handling
         location = schema.get('jobLocation', '')
+        
+        def _parse_addr(addr):
+            if not isinstance(addr, dict):
+                return str(addr)
+            locality = addr.get('addressLocality', '')
+            region = addr.get('addressRegion', '')
+            country = addr.get('addressCountry', '')
+            if isinstance(country, dict):
+                country = country.get('name', str(country))
+            parts = [p for p in [locality, region, country] if p]
+            return ", ".join(parts)
+
         if isinstance(location, list):
-            location = ", ".join([str(l.get('address', l)) if isinstance(l, dict) else str(l) for l in location])
+            locs = []
+            for l in location:
+                if isinstance(l, dict):
+                    locs.append(_parse_addr(l.get('address', l)))
+                else:
+                    locs.append(str(l))
+            location = "; ".join(locs)
         elif isinstance(location, dict):
-            addr = location.get('address', {})
-            if isinstance(addr, dict):
-                parts = [addr.get('addressLocality'), addr.get('addressRegion'), addr.get('addressCountry')]
-                location = ", ".join([p for p in parts if p])
-            else:
-                location = str(addr)
+            location = _parse_addr(location.get('address', location))
 
         # Description cleaning
         desc = schema.get('description', '')
@@ -119,9 +238,9 @@ class BaseJobScraper:
 
         return {
             "job_link": url,
-            "job_name": schema.get('title', ''),
+            "job_name": html.unescape(schema.get('title', '')),
             "job_location": location,
-            "job_department": schema.get('industry', ''),
+            "job_department": html.unescape(schema.get('industry', '')),
             "job_description": self.clean_html_field(desc),
             "job_responsibilities": self.clean_html_field(schema.get('responsibilities', '')),
             "minimum_qualifications": self.clean_html_field(schema.get('experienceRequirements', '')),

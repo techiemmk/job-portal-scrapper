@@ -30,13 +30,24 @@ class MicrosoftScraper(BaseJobScraper):
             pid_match = re.search(r'pid=(\d+)', current_url)
             pid = pid_match.group(1) if pid_match else "1970393556642939" # Fallback to a known PID if not found
             
-            # Get total job count
+            # Get total job count from the page text (e.g., "2954 jobs")
             total_count = 0
             try:
-                await page.wait_for_selector('b[data-testid="job-count"]', timeout=10000)
-                count_text = await page.get_attribute('b[data-testid="job-count"]', 'innerText')
-                total_count = int(re.sub(r'[^\d]', '', count_text))
+                # Try to find the "X jobs" text displayed at the top of the listing
+                count_text = await page.evaluate("""() => {
+                    const bodyText = document.body.innerText;
+                    const match = bodyText.match(/(\\d[\\d,]+)\\s*jobs?/i);
+                    if (match) return match[1].replace(/,/g, '');
+                    // Fallback: try "X of Y" pagination text (Y * 10 = approx total)
+                    const pageMatch = bodyText.match(/\\d+\\s*of\\s*(\\d+)/i);
+                    if (pageMatch) return String(parseInt(pageMatch[1]) * 10);
+                    return '0';
+                }""")
+                total_count = int(count_text) if count_text else 0
             except:
+                pass
+            
+            if total_count == 0:
                 print("Warning: Could not find job count. Defaulting to 100.")
                 total_count = 100
 
@@ -70,13 +81,8 @@ class MicrosoftScraper(BaseJobScraper):
 
             print(f"Collected {len(job_links)} Microsoft job links.")
             
-            # Step 3: Scrape job details in parallel
-            tasks = []
-            for link in job_links:
-                tasks.append(self.scrape_job_with_semaphore(context, link))
-            
-            results = await asyncio.gather(*tasks)
-            self.jobs = [r for r in results if r]
+            # Step 3: Scrape job details in staggered batches (handled by base class)
+            self.jobs = await self.scrape_jobs_in_batches(context, job_links, "microsoft")
             
             # Final Save
             self.save_to_formats("microsoft")
@@ -86,16 +92,9 @@ class MicrosoftScraper(BaseJobScraper):
             await browser.close()
             print(f"Microsoft scraping complete. Found {len(self.jobs)} jobs.")
 
-    async def scrape_job_with_semaphore(self, context, url):
-        async with self.semaphore:
-            page = await context.new_page()
-            result = await self.scrape_job_details(page, url)
-            await page.close()
-            return result
-
     async def scrape_job_details(self, page, url):
         try:
-            await page.goto(url)
+            await page.goto(url, timeout=60000)
             await page.wait_for_timeout(5000)
 
             html = await page.content()
@@ -122,7 +121,7 @@ class MicrosoftScraper(BaseJobScraper):
                 "job_responsibilities": "",
                 "minimum_qualifications": "",
                 "preferred_qualifications": "",
-                "about_company": "Microsoft is a global leader in software, services, devices, and solutions.",
+                "about_company": "",
                 "salary": "",
                 "compensation_details": "",
                 "eeo": "",
@@ -148,11 +147,11 @@ class MicrosoftScraper(BaseJobScraper):
             if schema_data:
                 # Title from schema
                 if schema_data.get('title'):
-                    res['job_name'] = schema_data['title'].strip()
+                    res['job_name'] = self.clean_html_field(schema_data['title'])
                 
                 # Description from schema — this is the cleanest source
                 if schema_data.get('description'):
-                    res['job_description'] = schema_data['description'].strip()
+                    res['job_description'] = self.clean_html_field(schema_data['description'])
                 
                 # Posted date from schema
                 if schema_data.get('datePosted'):
@@ -176,15 +175,27 @@ class MicrosoftScraper(BaseJobScraper):
                     if loc_strings:
                         res['job_location'] = "; ".join(loc_strings)
 
+                # About Company from schema description — Microsoft descriptions often end with
+                # "Microsoft's mission is to empower every person and every organization..."
+                if schema_data.get('description'):
+                    desc_text = schema_data['description']
+                    # Look for the mission statement paragraph
+                    mission_match = re.search(
+                        r"(Microsoft[''']?s mission is to empower[\s\S]*?)$",
+                        desc_text, re.IGNORECASE
+                    )
+                    if mission_match:
+                        res['about_company'] = mission_match.group(1).strip()
+
             # --- Fallback: title from DOM if schema didn't provide it ---
             if not res['job_name']:
                 title_elem = soup.find('h2', class_='position-title-3TPtN')
                 if title_elem:
-                    res['job_name'] = title_elem.get_text().strip()
+                    res['job_name'] = self.clean_html_field(title_elem.get_text())
                 else:
                     h_elem = soup.find('h1') or soup.find('h2')
                     if h_elem:
-                        res['job_name'] = h_elem.get_text().strip()
+                        res['job_name'] = self.clean_html_field(h_elem.get_text())
 
             if not res['job_name'] or res['job_name'] == 'N/A':
                 return None
@@ -375,6 +386,26 @@ class MicrosoftScraper(BaseJobScraper):
                         res['posted_date'] = parsed_date.isoformat()
                     except (ValueError, ImportError):
                         res['posted_date'] = raw_date
+
+            # --- About Company: extract dynamically, fall back to standard text ---
+            if not res['about_company']:
+                # Try to find mission statement from page text
+                mission_match = re.search(
+                    r"(Microsoft[''']?s mission is to empower[\s\S]*?(?:at work and beyond\.|to achieve more\.))",
+                    page_text, re.IGNORECASE
+                )
+                if mission_match:
+                    res['about_company'] = mission_match.group(1).strip()
+                else:
+                    # Standard text from Microsoft's careers page — used when the job page
+                    # doesn't include the mission statement (varies by posting)
+                    res['about_company'] = (
+                        "Microsoft's mission is to empower every person and every organization "
+                        "on the planet to achieve more. As employees we come together with a growth "
+                        "mindset, innovate to empower others, and collaborate to realize our shared goals. "
+                        "Each day we build on our values of respect, integrity, and accountability to "
+                        "create a culture of inclusion where everyone can thrive at work and beyond."
+                    )
 
             return res
         except Exception as e:

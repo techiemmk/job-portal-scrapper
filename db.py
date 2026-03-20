@@ -276,6 +276,7 @@ def sync_jobs(platform, company, scraped_jobs):
     Synchronize scraped jobs with the database for a given platform.
 
     1. Upsert each scraped job (insert if new, update if content changed).
+       Commits every BATCH_COMMIT_SIZE jobs to avoid losing progress on crash.
     2. Soft-delete jobs in DB that are NOT in the scraped set (is_active=false, closed_at=NOW).
 
     Returns a summary dict with counts.
@@ -287,6 +288,7 @@ def sync_jobs(platform, company, scraped_jobs):
     cur = conn.cursor()
 
     now = datetime.now()
+    BATCH_COMMIT_SIZE = 50
 
     inserted = 0
     updated = 0
@@ -294,134 +296,149 @@ def sync_jobs(platform, company, scraped_jobs):
 
     scraped_source_ids = set()
 
-    for job in scraped_jobs:
-        job_link = job.get("job_link", "")
-        if not job_link:
+    for idx, job in enumerate(scraped_jobs, 1):
+        try:
+            job_link = job.get("job_link", "")
+            if not job_link:
+                continue
+
+            source_job_id = extract_source_job_id(platform, job_link)
+            if not source_job_id:
+                continue
+
+            scraped_source_ids.add(source_job_id)
+            salary_data = parse_salary(job.get("salary", ""))
+            keywords = extract_keywords(job)
+            additional_links = _to_text_array(job.get("additional_links", ""))
+
+            # Check if job already exists
+            cur.execute(
+                "SELECT id FROM jobs WHERE platform = %s AND source_job_id = %s",
+                (platform, source_job_id)
+            )
+            existing = cur.fetchone()
+
+            if existing is None:
+                # INSERT new job
+                job_id = str(uuid.uuid4())
+                cur.execute("""
+                    INSERT INTO jobs (
+                        id, title, company, location, description,
+                        requirements, salary, salary_min, salary_max,
+                        posted_at, source_url, keywords, apply_url,
+                        source_job_id, platform, department, responsibilities,
+                        min_qualifications, pref_qualifications, about_company,
+                        compensation_details, eeo_statement, additional_links,
+                        salary_range_display, salary_period,
+                        salary_has_bonus, salary_has_equity, salary_has_benefits,
+                        compensation_summary, is_active, last_ingested_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s
+                    )
+                """, (
+                    job_id,
+                    job.get("job_name", ""),
+                    company,
+                    job.get("job_location", ""),
+                    job.get("job_description", ""),
+                    _to_text_array(job.get("requirements", [])),
+                    salary_data["salary"],
+                    salary_data["salary_min"],
+                    salary_data["salary_max"],
+                    job.get("posted_date", now),
+                    job_link,
+                    keywords,
+                    job.get("apply_url", job_link),
+                    source_job_id,
+                    platform,
+                    job.get("job_department", ""),
+                    job.get("job_responsibilities", ""),
+                    job.get("minimum_qualifications", ""),
+                    job.get("preferred_qualifications", ""),
+                    job.get("about_company", ""),
+                    job.get("compensation_details", ""),
+                    job.get("eeo", ""),
+                    additional_links,
+                    salary_data["salary_range_display"],
+                    "year",
+                    salary_data["salary_has_bonus"],
+                    salary_data["salary_has_equity"],
+                    salary_data["salary_has_benefits"],
+                    salary_data["compensation_summary"],
+                    True,
+                    now,
+                ))
+                inserted += 1
+
+            else:
+                existing_id = existing[0]
+
+                # Always update content fields + last_ingested_at.
+                # If the job was previously closed, reactivate it.
+                cur.execute("""
+                    UPDATE jobs SET
+                        title = %s, company = %s, location = %s, description = %s,
+                        requirements = %s, salary = %s, salary_min = %s, salary_max = %s,
+                        source_url = %s, keywords = %s, apply_url = %s,
+                        department = %s, responsibilities = %s,
+                        min_qualifications = %s, pref_qualifications = %s, about_company = %s,
+                        compensation_details = %s, eeo_statement = %s, additional_links = %s,
+                        salary_range_display = %s,
+                        salary_has_bonus = %s, salary_has_equity = %s, salary_has_benefits = %s,
+                        compensation_summary = %s,
+                        is_active = true, closed_at = NULL, last_ingested_at = %s
+                    WHERE id = %s
+                """, (
+                    job.get("job_name", ""),
+                    company,
+                    job.get("job_location", ""),
+                    job.get("job_description", ""),
+                    _to_text_array(job.get("requirements", [])),
+                    salary_data["salary"],
+                    salary_data["salary_min"],
+                    salary_data["salary_max"],
+                    job_link,
+                    keywords,
+                    job.get("apply_url", job_link),
+                    job.get("job_department", ""),
+                    job.get("job_responsibilities", ""),
+                    job.get("minimum_qualifications", ""),
+                    job.get("preferred_qualifications", ""),
+                    job.get("about_company", ""),
+                    job.get("compensation_details", ""),
+                    job.get("eeo", ""),
+                    additional_links,
+                    salary_data["salary_range_display"],
+                    salary_data["salary_has_bonus"],
+                    salary_data["salary_has_equity"],
+                    salary_data["salary_has_benefits"],
+                    salary_data["compensation_summary"],
+                    now,
+                    existing_id,
+                ))
+                updated += 1
+
+            # Batch commit every BATCH_COMMIT_SIZE jobs
+            if idx % BATCH_COMMIT_SIZE == 0:
+                conn.commit()
+                print(f"  💾 DB batch commit: {idx}/{len(scraped_jobs)} jobs processed ({inserted} new, {updated} updated)")
+
+        except Exception as e:
+            print(f"  ⚠ Error processing job {idx} ({job.get('job_link', 'unknown')}): {e}")
+            conn.rollback()
             continue
 
-        source_job_id = extract_source_job_id(platform, job_link)
-        if not source_job_id:
-            continue
-
-        scraped_source_ids.add(source_job_id)
-        salary_data = parse_salary(job.get("salary", ""))
-        keywords = extract_keywords(job)
-        additional_links = _to_text_array(job.get("additional_links", ""))
-
-        # Check if job already exists
-        cur.execute(
-            "SELECT id FROM jobs WHERE platform = %s AND source_job_id = %s",
-            (platform, source_job_id)
-        )
-        existing = cur.fetchone()
-
-        if existing is None:
-            # INSERT new job
-            job_id = str(uuid.uuid4())
-            cur.execute("""
-                INSERT INTO jobs (
-                    id, title, company, location, description,
-                    requirements, salary, salary_min, salary_max,
-                    posted_at, source_url, keywords, apply_url,
-                    source_job_id, platform, department, responsibilities,
-                    min_qualifications, pref_qualifications, about_company,
-                    compensation_details, eeo_statement, additional_links,
-                    salary_range_display, salary_period,
-                    salary_has_bonus, salary_has_equity, salary_has_benefits,
-                    compensation_summary, is_active, last_ingested_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s
-                )
-            """, (
-                job_id,
-                job.get("job_name", ""),
-                company,
-                job.get("job_location", ""),
-                job.get("job_description", ""),
-                _to_text_array(job.get("requirements", [])),
-                salary_data["salary"],
-                salary_data["salary_min"],
-                salary_data["salary_max"],
-                job.get("posted_date", now),
-                job_link,
-                keywords,
-                job.get("apply_url", job_link),
-                source_job_id,
-                platform,
-                job.get("job_department", ""),
-                job.get("job_responsibilities", ""),
-                job.get("minimum_qualifications", ""),
-                job.get("preferred_qualifications", ""),
-                job.get("about_company", ""),
-                job.get("compensation_details", ""),
-                job.get("eeo", ""),
-                additional_links,
-                salary_data["salary_range_display"],
-                "year",
-                salary_data["salary_has_bonus"],
-                salary_data["salary_has_equity"],
-                salary_data["salary_has_benefits"],
-                salary_data["compensation_summary"],
-                True,
-                now,
-            ))
-            inserted += 1
-
-        else:
-            existing_id = existing[0]
-
-            # Always update content fields + last_ingested_at.
-            # If the job was previously closed, reactivate it.
-            cur.execute("""
-                UPDATE jobs SET
-                    title = %s, company = %s, location = %s, description = %s,
-                    requirements = %s, salary = %s, salary_min = %s, salary_max = %s,
-                    source_url = %s, keywords = %s, apply_url = %s,
-                    department = %s, responsibilities = %s,
-                    min_qualifications = %s, pref_qualifications = %s, about_company = %s,
-                    compensation_details = %s, eeo_statement = %s, additional_links = %s,
-                    salary_range_display = %s,
-                    salary_has_bonus = %s, salary_has_equity = %s, salary_has_benefits = %s,
-                    compensation_summary = %s,
-                    is_active = true, closed_at = NULL, last_ingested_at = %s
-                WHERE id = %s
-            """, (
-                job.get("job_name", ""),
-                company,
-                job.get("job_location", ""),
-                job.get("job_description", ""),
-                _to_text_array(job.get("requirements", [])),
-                salary_data["salary"],
-                salary_data["salary_min"],
-                salary_data["salary_max"],
-                job_link,
-                keywords,
-                job.get("apply_url", job_link),
-                job.get("job_department", ""),
-                job.get("job_responsibilities", ""),
-                job.get("minimum_qualifications", ""),
-                job.get("preferred_qualifications", ""),
-                job.get("about_company", ""),
-                job.get("compensation_details", ""),
-                job.get("eeo", ""),
-                additional_links,
-                salary_data["salary_range_display"],
-                salary_data["salary_has_bonus"],
-                salary_data["salary_has_equity"],
-                salary_data["salary_has_benefits"],
-                salary_data["compensation_summary"],
-                now,
-                existing_id,
-            ))
-            updated += 1
+    # Commit any remaining jobs from the last partial batch
+    conn.commit()
+    print(f"  💾 DB final commit: {len(scraped_jobs)}/{len(scraped_jobs)} jobs processed")
 
     # Soft-delete: mark active jobs NOT in scraped set as closed
     cur.execute(
@@ -458,3 +475,4 @@ def sync_jobs(platform, company, scraped_jobs):
     print(f"{'='*50}\n")
 
     return summary
+
