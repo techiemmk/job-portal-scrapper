@@ -288,15 +288,16 @@ class KumaranScraper(BaseJobScraper):
                 if field in job_data:
                     job_data[field] = self.clean_html_field(job_data[field])
 
-            # FIX 1: Ensure responsibilities field is properly mapped
-            # Keep the extracted responsibilities as-is (don't consolidate with other fields)
-            if not job_data.get('responsibilities'):
+            # FIX 1: Map responsibilities field to correct database column name
+            # Extract and clean responsibilities
+            resp_text = job_data.get('responsibilities', '')
+            if not resp_text:
                 # Fallback: If no responsibilities section found, try to extract from requirements if available
                 if job_data.get('requirements'):
                     # Use first part of requirements as fallback
-                    job_data['responsibilities'] = job_data['requirements'][:500]
-                else:
-                    job_data['responsibilities'] = ""
+                    resp_text = job_data['requirements'][:500]
+
+            job_data['job_responsibilities'] = resp_text
 
             # FIX 2: Properly consolidate requirements (Requirements + Must-Have + Hard Skills)
             req_parts = []
