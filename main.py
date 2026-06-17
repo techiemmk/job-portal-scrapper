@@ -9,6 +9,7 @@ from scrapers.apple import AppleScraper
 from scrapers.openai import OpenAIScraper
 from scrapers.microsoft import MicrosoftScraper
 from scrapers.netflix import NetflixScraper
+from scrapers.kumaran import KumaranScraper
 
 from datetime import datetime
 
@@ -21,6 +22,7 @@ PORTAL_MAP = {
     "openai":    ("OpenAI",    OpenAIScraper),
     "microsoft": ("Microsoft", MicrosoftScraper),
     "netflix":   ("Netflix",   NetflixScraper),
+    "kumaran":   ("Kumaran Systems", KumaranScraper),
 }
 
 async def main():

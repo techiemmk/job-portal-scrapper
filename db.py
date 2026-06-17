@@ -171,6 +171,7 @@ def extract_source_job_id(platform, job_link):
             "openai":    r'/openai/([^/?]+)',
             "microsoft": r'/job/(\d+)',
             "netflix":   r'/careers/job/(\d+)',
+            "kumaran":   r'/jobs/Careers/(\d+)',
         }
 
         pattern = patterns.get(platform)
