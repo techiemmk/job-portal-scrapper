@@ -283,11 +283,22 @@ class KumaranScraper(BaseJobScraper):
                     pass
 
             # Clean HTML fields
-            for field in ['job_description', 'job_department', 'requirements', 'responsibilities', 'eeo']:
+            for field in ['job_description', 'job_department', 'requirements', 'responsibilities', 'eeo',
+                         'must_have_skills', 'soft_skills', 'hard_skills']:
                 if field in job_data:
                     job_data[field] = self.clean_html_field(job_data[field])
 
-            # Consolidate requirements: combine "Requirements" + "Must-Have Skills" + "Hard Skills"
+            # FIX 1: Ensure responsibilities field is properly mapped
+            # Keep the extracted responsibilities as-is (don't consolidate with other fields)
+            if not job_data.get('responsibilities'):
+                # Fallback: If no responsibilities section found, try to extract from requirements if available
+                if job_data.get('requirements'):
+                    # Use first part of requirements as fallback
+                    job_data['responsibilities'] = job_data['requirements'][:500]
+                else:
+                    job_data['responsibilities'] = ""
+
+            # FIX 2: Properly consolidate requirements (Requirements + Must-Have + Hard Skills)
             req_parts = []
             if job_data.get('requirements'):
                 req_parts.append(f"Requirements:\n{job_data['requirements']}")
@@ -298,15 +309,25 @@ class KumaranScraper(BaseJobScraper):
 
             job_data['requirements'] = "\n".join(req_parts) if req_parts else ""
 
-            # Consolidate min_qualifications: combine "Experience" + "Soft Skills"
-            qual_parts = []
+            # FIX 3: Better consolidation of qualifications
+            # min_qualifications = Experience + Hard Requirements
+            min_qual_parts = []
             if job_data.get('experience'):
-                qual_parts.append(f"Experience: {job_data['experience']}")
-            if job_data.get('soft_skills'):
-                qual_parts.append(f"Soft Skills:\n{job_data['soft_skills']}")
+                min_qual_parts.append(f"Experience: {job_data['experience']}")
+            if job_data.get('requirements') and not job_data.get('must_have_skills'):
+                # Only add if we don't have structured requirements
+                min_qual_parts.append(f"\nRequirements:\n{job_data['requirements']}")
 
-            job_data['minimum_qualifications'] = "\n".join(qual_parts) if qual_parts else ""
-            job_data['preferred_qualifications'] = ""
+            job_data['minimum_qualifications'] = "\n".join(min_qual_parts) if min_qual_parts else ""
+
+            # preferred_qualifications = Soft Skills + Hard Skills
+            pref_qual_parts = []
+            if job_data.get('soft_skills'):
+                pref_qual_parts.append(f"Soft Skills:\n{job_data['soft_skills']}")
+            if job_data.get('hard_skills'):
+                pref_qual_parts.append(f"\nHard Skills:\n{job_data['hard_skills']}")
+
+            job_data['preferred_qualifications'] = "\n".join(pref_qual_parts) if pref_qual_parts else ""
 
             # Handle optional fields
             job_data['compensation_details'] = ""
