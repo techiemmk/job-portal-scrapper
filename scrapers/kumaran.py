@@ -124,11 +124,12 @@ class KumaranScraper(BaseJobScraper):
                     if (contractMatch) data.job_type = 'Contract';
                 }
 
-                // Posted Date - extract from "Posted on DD/MM/YYYY"
-                const dateMatch = pageText.match(/Posted on (\\d{2}\\/(\\d{2})\\/(\\d{4}))/);
+                // Posted Date - extract from "Posted on MM/DD/YYYY" (American format)
+                const dateMatch = pageText.match(/Posted on (\\d{2})\\/(\\d{2})\\/(\\d{4})/);
                 if (dateMatch) {
-                    const [_, dateStr, month, year] = dateMatch;
-                    const [day, , ] = dateStr.split('/');
+                    const month = dateMatch[1];  // MM
+                    const day = dateMatch[2];    // DD
+                    const year = dateMatch[3];   // YYYY
                     data.posted_date = `${year}-${month}-${day}`;
                 } else {
                     data.posted_date = new Date().toISOString().split('T')[0];
