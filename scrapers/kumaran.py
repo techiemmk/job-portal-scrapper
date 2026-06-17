@@ -96,22 +96,32 @@ class KumaranScraper(BaseJobScraper):
             # Extract job ID from URL
             job_id = url.split("/jobs/Careers/")[1].split("/")[0] if "/jobs/Careers/" in url else ""
 
-            # Extract header information using better selectors
             job_data = await page.evaluate("""() => {
                 const data = {};
                 const pageText = document.body.innerText;
 
-                // Job Title - look for the large heading (usually appears early)
+                // Job Title - extract from div.cw-jobheader-info h1
                 let jobTitle = '';
-                const headings = document.querySelectorAll('h1, h2, h3');
-                for (let h of headings) {
-                    const text = h.innerText.trim();
-                    // Avoid short headings like "About Us", look for title-like headings
-                    if (text.length > 15 && text.length < 200 && !text.includes('\\n')) {
-                        jobTitle = text;
-                        break;
+                const headerDiv = document.querySelector('div.cw-jobheader-info h1');
+                if (headerDiv) {
+                    jobTitle = headerDiv.innerText.trim();
+                }
+
+                // Fallback: look for h1 that's not a section heading
+                if (!jobTitle) {
+                    const allH1s = document.querySelectorAll('h1');
+                    for (let h1 of allH1s) {
+                        const text = h1.innerText.trim();
+                        // Skip section headings
+                        if (!text.includes('Key Responsibilities') &&
+                            !text.includes('About Us') &&
+                            !text.includes('Responsibilities')) {
+                            jobTitle = text;
+                            break;
+                        }
                     }
                 }
+
                 data.job_name = jobTitle;
 
                 // Company (static)
@@ -267,6 +277,22 @@ class KumaranScraper(BaseJobScraper):
             job_data.update(content_data)
             job_data['job_link'] = url
             job_data['job_id'] = job_id
+
+            # Fallback: Extract job title from URL slug if not found on page
+            if not job_data.get('job_name') or job_data['job_name'] == '':
+                try:
+                    # URL format: /jobs/Careers/{JOB_ID}/{JOB_SLUG}?source=CareerSite
+                    url_parts = url.split('/jobs/Careers/')
+                    if len(url_parts) > 1:
+                        slug_part = url_parts[1].split('?')[0]  # Remove query params
+                        slug_parts = slug_part.split('/')
+                        if len(slug_parts) > 1:
+                            job_slug = slug_parts[1]  # Get the slug part
+                            # Convert from kebab-case to Title Case
+                            job_title = ' '.join(word.capitalize() for word in job_slug.split('-'))
+                            job_data['job_name'] = job_title
+                except:
+                    pass
 
             # Clean HTML fields
             for field in ['job_description', 'job_department', 'requirements', 'responsibilities', 'eeo']:
