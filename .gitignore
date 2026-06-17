@@ -4,10 +4,19 @@ __pycache__/
 *$py.class
 venv/
 .env
+.env.*
+*.egg-info/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+test-results/
+htmlcov/
+.coverage
 
 # Playwright
 browser-artifacts/
-test-results/
 playwright-report/
 
 # Project Specific
@@ -15,6 +24,14 @@ data/
 *.xlsx
 *.csv
 *.ods
+*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # OS specific
 .DS_Store
