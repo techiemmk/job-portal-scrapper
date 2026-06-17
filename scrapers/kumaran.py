@@ -197,77 +197,65 @@ class KumaranScraper(BaseJobScraper):
                 return data;
             }""")
 
-            # Extract main content sections using improved text parsing
+            # Extract main content sections using DOM traversal (handles both headings and bold/strong tags)
             content_data = await page.evaluate("""() => {
                 const data = {};
-                const bodyText = document.body.innerText;
 
-                // Helper function to extract section between two markers
-                function extractBetween(startMarker, endMarker) {
-                    const startIdx = bodyText.indexOf(startMarker);
-                    if (startIdx === -1) return '';
+                // Helper: extract content after a section marker (heading or bold tag)
+                function getContentAfterSection(sectionText, maxLength = 2000) {
+                    // Try to find as heading first
+                    let marker = Array.from(document.querySelectorAll('h2, h3, h4'))
+                        .find(h => h.innerText.includes(sectionText));
 
-                    let endIdx;
-                    if (endMarker) {
-                        endIdx = bodyText.indexOf(endMarker, startIdx + startMarker.length);
-                        if (endIdx === -1) {
-                            endIdx = bodyText.length;
+                    // If not found as heading, try bold/strong tags
+                    if (!marker) {
+                        marker = Array.from(document.querySelectorAll('strong, b'))
+                            .find(el => el.innerText.trim() === sectionText);
+                    }
+
+                    if (!marker) return '';
+
+                    let content = '';
+                    let sibling = marker.nextElementSibling;
+                    let elementCount = 0;
+                    const maxElements = 20;
+
+                    while (sibling && elementCount < maxElements) {
+                        const text = sibling.innerText ? sibling.innerText.trim() : '';
+
+                        // Stop if we hit another section marker (bold/strong with text or heading)
+                        if (sibling.tagName.match(/H[1-6]/) ||
+                            (sibling.tagName === 'STRONG' || sibling.tagName === 'B') && text.length < 50) {
+                            break;
                         }
-                    } else {
-                        endIdx = bodyText.length;
+
+                        if (text) {
+                            // For lists, add bullet points
+                            if (sibling.tagName === 'UL' || sibling.tagName === 'OL') {
+                                Array.from(sibling.querySelectorAll('li')).forEach(li => {
+                                    content += '• ' + li.innerText.trim() + '\\n';
+                                });
+                            } else if (sibling.tagName !== 'STRONG' && sibling.tagName !== 'B') {
+                                content += text + '\\n';
+                            }
+                        }
+
+                        sibling = sibling.nextElementSibling;
+                        elementCount++;
                     }
 
-                    return bodyText.substring(startIdx + startMarker.length, endIdx).trim();
+                    return content.substring(0, maxLength).trim();
                 }
 
-                // Job Description - look for the first paragraph after "Job Description" and before "Requirements"
-                const descStart = bodyText.indexOf('Job Description');
-                const reqStart = bodyText.indexOf('Requirements');
-                let description = '';
-                if (descStart !== -1 && reqStart !== -1) {
-                    description = bodyText.substring(descStart + 'Job Description'.length, reqStart).trim();
-                    // Remove just the first line if it's a title repeat
-                    const lines = description.split('\\n');
-                    if (lines[0].length < 100) {
-                        description = lines.slice(1).join('\\n').trim();
-                    }
-                }
-                data.job_description = description.substring(0, 500); // Limit to first 500 chars
-
-                // Requirements section (just the bullet points)
-                let requirements = extractBetween('Requirements:', 'Responsibilities:');
-                data.requirements = requirements.substring(0, 1000);
-
-                // Responsibilities section
-                let responsibilities = extractBetween('Responsibilities:', 'Must-Have Skills');
-                data.responsibilities = responsibilities.substring(0, 1000);
-
-                // Must-Have Skills
-                let mustHaveSkills = extractBetween('Must-Have Skills:', 'Soft Skills');
-                data.must_have_skills = mustHaveSkills.substring(0, 800);
-
-                // Hard Skills
-                let hardSkills = extractBetween('Hard Skills:', 'Equal Opportunity');
-                if (!hardSkills) {
-                    hardSkills = extractBetween('Hard Skills:', 'I\\'m interested');
-                }
-                data.hard_skills = hardSkills.substring(0, 800);
-
-                // Soft Skills
-                let softSkills = extractBetween('Soft Skills:', 'Hard Skills');
-                if (!softSkills) {
-                    softSkills = extractBetween('Soft Skills:', 'Equal Opportunity');
-                }
-                data.soft_skills = softSkills.substring(0, 800);
-
-                // EEO Statement
-                const eeoMatch = bodyText.match(/Equal Opportunity[^]*?(?=I\\'m interested|View all jobs|$)/);
-                let eeo = eeoMatch ? eeoMatch[0].trim() : '';
-                data.eeo = eeo.substring(0, 500);
-
-                // About Company (from About Us section)
-                let aboutCompany = extractBetween('About Us', 'Why Kumaran');
-                data.about_company_desc = aboutCompany.substring(0, 800);
+                // Extract each section
+                data.job_description = getContentAfterSection('Job Description', 600);
+                data.requirements = getContentAfterSection('Requirements', 2000);
+                data.responsibilities = getContentAfterSection('Responsibilities', 2000);
+                data.must_have_skills = getContentAfterSection('Must-Have Skills', 1500);
+                data.soft_skills = getContentAfterSection('Soft Skills', 1500);
+                data.hard_skills = getContentAfterSection('Hard Skills', 1500);
+                data.eeo = getContentAfterSection('Equal Opportunity', 600);
+                data.about_company_desc = getContentAfterSection('About Us', 1000);
 
                 return data;
             }""")
