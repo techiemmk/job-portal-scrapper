@@ -50,19 +50,39 @@ class KumaranScraper(BaseJobScraper):
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await page.wait_for_timeout(3000)
 
-            # Extract all job links
+            # Extract all job links - try multiple selectors
             job_links = await page.evaluate("""() => {
-                return Array.from(document.querySelectorAll('a[href*="/jobs/Careers/"]'))
+                const links = [];
+
+                // Strategy 1: Look for all links with /jobs/Careers/ in href
+                const allLinks = Array.from(document.querySelectorAll('a[href*="/jobs/Careers/"]'))
                     .map(a => a.href)
-                    .filter(href => href.includes('/jobs/Careers/') && !href.includes('?'))
-                    .filter((href, index, self) => self.indexOf(href) === index);  // Remove duplicates
+                    .filter(href => href.includes('/jobs/Careers/') && href.match(/\\/jobs\\/Careers\\/\\d+\\//))
+                    .filter((href, index, self) => self.indexOf(href) === index);
+
+                // Strategy 2: Look for job cards/containers and extract links
+                const jobCards = document.querySelectorAll('[class*="job"], [data-job*=""], article, .cw-job-card');
+                jobCards.forEach(card => {
+                    const link = card.querySelector('a[href*="/jobs/Careers/"]');
+                    if (link && link.href) {
+                        links.push(link.href);
+                    }
+                });
+
+                // Combine and deduplicate
+                const combined = [...new Set([...allLinks, ...links])];
+                return combined.filter(href => href.match(/\\/jobs\\/Careers\\/\\d+\\//));
             }""")
 
             print(f"Extracted {len(job_links)} job links from listing page")
+            if len(job_links) > 0:
+                print(f"Sample URLs: {job_links[:3]}")
             return job_links
 
         except Exception as e:
             print(f"Error extracting job links: {e}")
+            import traceback
+            traceback.print_exc()
             return []
         finally:
             await page.close()
@@ -76,28 +96,39 @@ class KumaranScraper(BaseJobScraper):
             # Extract job ID from URL
             job_id = url.split("/jobs/Careers/")[1].split("/")[0] if "/jobs/Careers/" in url else ""
 
-            # Extract header information
+            # Extract header information using better selectors
             job_data = await page.evaluate("""() => {
                 const data = {};
+                const pageText = document.body.innerText;
 
-                // Job Title (from h1 or main heading)
-                const titleEl = document.querySelector('h1, .cw-job-title, [data-test="job-title"]');
-                data.job_name = titleEl ? titleEl.innerText.trim() : '';
+                // Job Title - look for the large heading (usually appears early)
+                let jobTitle = '';
+                const headings = document.querySelectorAll('h1, h2, h3');
+                for (let h of headings) {
+                    const text = h.innerText.trim();
+                    // Avoid short headings like "About Us", look for title-like headings
+                    if (text.length > 15 && text.length < 200 && !text.includes('\\n')) {
+                        jobTitle = text;
+                        break;
+                    }
+                }
+                data.job_name = jobTitle;
 
                 // Company (static)
                 data.about_company = 'Kumaran Systems Pvt Ltd';
 
-                // Job Type (from header - "Full time" or "Contract")
-                const headerText = document.body.innerText;
+                // Job Type - look for "Full time" or "Contract" in the page
                 data.job_type = 'Full time';
-                if (headerText.includes('Contract')) {
-                    data.job_type = 'Contract';
+                if (pageText.includes('Contract')) {
+                    const contractMatch = pageText.match(/Contract\\s*\\((\\d+)\\)/);
+                    if (contractMatch) data.job_type = 'Contract';
                 }
 
-                // Posted Date (format: "Posted on DD/MM/YYYY")
-                const dateMatch = headerText.match(/Posted on (\\d{2}\\/\\d{2}\\/\\d{4})/);
+                // Posted Date - extract from "Posted on DD/MM/YYYY"
+                const dateMatch = pageText.match(/Posted on (\\d{2}\\/(\\d{2})\\/(\\d{4}))/);
                 if (dateMatch) {
-                    const [day, month, year] = dateMatch[1].split('/');
+                    const [_, dateStr, month, year] = dateMatch;
+                    const [day, , ] = dateStr.split('/');
                     data.posted_date = `${year}-${month}-${day}`;
                 } else {
                     data.posted_date = new Date().toISOString().split('T')[0];
@@ -106,178 +137,126 @@ class KumaranScraper(BaseJobScraper):
                 return data;
             }""")
 
-            # Extract sidebar metadata
+            # Extract sidebar metadata using text parsing
             sidebar_data = await page.evaluate("""() => {
                 const data = {};
+                const pageText = document.body.innerText;
 
-                // Department Name
-                const deptEl = Array.from(document.querySelectorAll('*')).find(el =>
-                    el.innerText.includes('Department Name')
-                );
-                if (deptEl) {
-                    data.job_department = deptEl.nextElementSibling?.innerText ||
-                                         deptEl.parentElement?.innerText.split('Department Name')[1].trim() || '';
-                }
+                // Department Name - extract from text
+                const deptMatch = pageText.match(/Department Name\\s*([^\\n]+)/);
+                data.job_department = deptMatch ? deptMatch[1].trim() : '';
 
                 // Work Experience (e.g., "4-5 years")
-                const expEl = Array.from(document.querySelectorAll('*')).find(el =>
-                    el.innerText.includes('Work Experience')
-                );
+                const expMatch = pageText.match(/Work Experience\\s*([^\\n]+)/);
                 let experience = '';
-                if (expEl) {
-                    experience = expEl.nextElementSibling?.innerText ||
-                                expEl.parentElement?.innerText.split('Work Experience')[1].split('\\n')[0].trim() || '';
+                if (expMatch) {
+                    experience = expMatch[1].trim();
+                    if (experience.toLowerCase() === 'work experience') {
+                        experience = '';
+                    }
                 }
                 data.experience = experience;
 
-                // Location fields (City, State, Country, Postal Code)
+                // Location fields using regex extraction
                 let city = '', state = '', country = '', postal = '';
 
-                const cityEl = Array.from(document.querySelectorAll('*')).find(el =>
-                    el.innerText.includes('City') && !el.innerText.includes('State')
-                );
-                if (cityEl) {
-                    city = cityEl.nextElementSibling?.innerText ||
-                          cityEl.parentElement?.innerText.split('City')[1].split('\\n')[0].trim() || '';
+                // City
+                const cityMatch = pageText.match(/\\bCity\\s*([^\\n]+)/);
+                if (cityMatch) city = cityMatch[1].trim();
+
+                // State/Province
+                const stateMatch = pageText.match(/State\\/Province\\s*([^\\n]+)/);
+                if (stateMatch) state = stateMatch[1].trim();
+
+                // Country
+                const countryMatch = pageText.match(/\\bCountry\\s*([^\\n]+)/);
+                if (countryMatch) {
+                    country = countryMatch[1].trim();
+                    if (country.toLowerCase() === 'country') country = '';
                 }
 
-                const stateEl = Array.from(document.querySelectorAll('*')).find(el =>
-                    el.innerText.includes('State/Province')
-                );
-                if (stateEl) {
-                    state = stateEl.nextElementSibling?.innerText ||
-                           stateEl.parentElement?.innerText.split('State/Province')[1].split('\\n')[0].trim() || '';
-                }
-
-                const countryEl = Array.from(document.querySelectorAll('*')).find(el =>
-                    el.innerText.includes('Country') && !el.innerText.includes('State')
-                );
-                if (countryEl) {
-                    country = countryEl.nextElementSibling?.innerText ||
-                             countryEl.parentElement?.innerText.split('Country')[1].split('\\n')[0].trim() || '';
-                }
-
-                const postalEl = Array.from(document.querySelectorAll('*')).find(el =>
-                    el.innerText.includes('Zip/Postal Code')
-                );
-                if (postalEl) {
-                    postal = postalEl.nextElementSibling?.innerText ||
-                            postalEl.parentElement?.innerText.split('Zip/Postal Code')[1].split('\\n')[0].trim() || '';
-                }
+                // Postal Code
+                const postalMatch = pageText.match(/Zip\\/Postal Code\\s*([^\\n]+)/);
+                if (postalMatch) postal = postalMatch[1].trim();
 
                 // Build location string
-                const parts = [city, state, country].filter(p => p);
+                const parts = [city, state, country].filter(p => p && p.length > 0);
                 data.job_location = parts.join(', ');
 
                 return data;
             }""")
 
-            # Extract main content sections
+            # Extract main content sections using improved text parsing
             content_data = await page.evaluate("""() => {
                 const data = {};
                 const bodyText = document.body.innerText;
 
-                // Helper function to extract section content
-                function extractSection(sectionTitle) {
-                    const startIndex = bodyText.indexOf(sectionTitle);
-                    if (startIndex === -1) return '';
+                // Helper function to extract section between two markers
+                function extractBetween(startMarker, endMarker) {
+                    const startIdx = bodyText.indexOf(startMarker);
+                    if (startIdx === -1) return '';
 
-                    const nextSectionIndex = bodyText.indexOf('\\n\\n', startIndex + sectionTitle.length);
-                    if (nextSectionIndex === -1) {
-                        return bodyText.substring(startIndex + sectionTitle.length).trim();
-                    }
-                    return bodyText.substring(startIndex + sectionTitle.length, nextSectionIndex).trim();
-                }
-
-                // Job Description
-                data.job_description = extractSection('Job Description');
-                if (data.job_description.startsWith('\\n')) {
-                    data.job_description = data.job_description.substring(1).trim();
-                }
-
-                // Requirements section
-                const requirementsStart = bodyText.indexOf('Requirements');
-                let requirements = '';
-                if (requirementsStart !== -1) {
-                    const responsibilitiesStart = bodyText.indexOf('Responsibilities');
-                    if (responsibilitiesStart !== -1) {
-                        requirements = bodyText.substring(requirementsStart, responsibilitiesStart).trim();
+                    let endIdx;
+                    if (endMarker) {
+                        endIdx = bodyText.indexOf(endMarker, startIdx + startMarker.length);
+                        if (endIdx === -1) {
+                            endIdx = bodyText.length;
+                        }
                     } else {
-                        requirements = bodyText.substring(requirementsStart).substring(0, 1000).trim();
+                        endIdx = bodyText.length;
+                    }
+
+                    return bodyText.substring(startIdx + startMarker.length, endIdx).trim();
+                }
+
+                // Job Description - look for the first paragraph after "Job Description" and before "Requirements"
+                const descStart = bodyText.indexOf('Job Description');
+                const reqStart = bodyText.indexOf('Requirements');
+                let description = '';
+                if (descStart !== -1 && reqStart !== -1) {
+                    description = bodyText.substring(descStart + 'Job Description'.length, reqStart).trim();
+                    // Remove just the first line if it's a title repeat
+                    const lines = description.split('\\n');
+                    if (lines[0].length < 100) {
+                        description = lines.slice(1).join('\\n').trim();
                     }
                 }
-                data.requirements = requirements;
+                data.job_description = description.substring(0, 500); // Limit to first 500 chars
+
+                // Requirements section (just the bullet points)
+                let requirements = extractBetween('Requirements:', 'Responsibilities:');
+                data.requirements = requirements.substring(0, 1000);
 
                 // Responsibilities section
-                const respStart = bodyText.indexOf('Responsibilities');
-                let responsibilities = '';
-                if (respStart !== -1) {
-                    const skillsStart = bodyText.indexOf('Must-Have Skills');
-                    if (skillsStart !== -1) {
-                        responsibilities = bodyText.substring(respStart, skillsStart).trim();
-                    } else {
-                        responsibilities = bodyText.substring(respStart).substring(0, 1000).trim();
-                    }
-                }
-                data.responsibilities = responsibilities;
+                let responsibilities = extractBetween('Responsibilities:', 'Must-Have Skills');
+                data.responsibilities = responsibilities.substring(0, 1000);
 
                 // Must-Have Skills
-                const mustHaveStart = bodyText.indexOf('Must-Have Skills');
-                let mustHaveSkills = '';
-                if (mustHaveStart !== -1) {
-                    const softSkillsStart = bodyText.indexOf('Soft Skills');
-                    if (softSkillsStart !== -1) {
-                        mustHaveSkills = bodyText.substring(mustHaveStart, softSkillsStart).trim();
-                    } else {
-                        mustHaveSkills = bodyText.substring(mustHaveStart).substring(0, 1500).trim();
-                    }
-                }
-                data.must_have_skills = mustHaveSkills;
+                let mustHaveSkills = extractBetween('Must-Have Skills:', 'Soft Skills');
+                data.must_have_skills = mustHaveSkills.substring(0, 800);
 
                 // Hard Skills
-                const hardSkillsStart = bodyText.indexOf('Hard Skills');
-                let hardSkills = '';
-                if (hardSkillsStart !== -1) {
-                    const softSkillsStart = bodyText.indexOf('Soft Skills');
-                    if (softSkillsStart !== -1) {
-                        hardSkills = bodyText.substring(hardSkillsStart, softSkillsStart).trim();
-                    } else {
-                        hardSkills = bodyText.substring(hardSkillsStart).substring(0, 1000).trim();
-                    }
+                let hardSkills = extractBetween('Hard Skills:', 'Equal Opportunity');
+                if (!hardSkills) {
+                    hardSkills = extractBetween('Hard Skills:', 'I\\'m interested');
                 }
-                data.hard_skills = hardSkills;
+                data.hard_skills = hardSkills.substring(0, 800);
 
                 // Soft Skills
-                const softSkillsStart = bodyText.indexOf('Soft Skills');
-                let softSkills = '';
-                if (softSkillsStart !== -1) {
-                    const eeoStart = bodyText.indexOf('Equal Opportunity');
-                    if (eeoStart !== -1) {
-                        softSkills = bodyText.substring(softSkillsStart, eeoStart).trim();
-                    } else {
-                        softSkills = bodyText.substring(softSkillsStart).substring(0, 1500).trim();
-                    }
+                let softSkills = extractBetween('Soft Skills:', 'Hard Skills');
+                if (!softSkills) {
+                    softSkills = extractBetween('Soft Skills:', 'Equal Opportunity');
                 }
-                data.soft_skills = softSkills;
+                data.soft_skills = softSkills.substring(0, 800);
 
                 // EEO Statement
-                const eeoStart = bodyText.indexOf('Equal Opportunity');
-                let eeo = '';
-                if (eeoStart !== -1) {
-                    eeo = bodyText.substring(eeoStart, eeoStart + 500).trim();
-                }
-                data.eeo = eeo;
+                const eeoMatch = bodyText.match(/Equal Opportunity[^]*?(?=I\\'m interested|View all jobs|$)/);
+                let eeo = eeoMatch ? eeoMatch[0].trim() : '';
+                data.eeo = eeo.substring(0, 500);
 
                 // About Company (from About Us section)
-                const aboutStart = bodyText.indexOf('About Us');
-                let aboutCompany = '';
-                if (aboutStart !== -1) {
-                    const whyStart = bodyText.indexOf('Why Kumaran');
-                    if (whyStart !== -1) {
-                        aboutCompany = bodyText.substring(aboutStart + 8, whyStart).trim();
-                    }
-                }
-                data.about_company_desc = aboutCompany;
+                let aboutCompany = extractBetween('About Us', 'Why Kumaran');
+                data.about_company_desc = aboutCompany.substring(0, 800);
 
                 return data;
             }""")
